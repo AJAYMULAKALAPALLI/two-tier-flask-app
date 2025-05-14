@@ -41,9 +41,9 @@ app = Flask(__name__)
 
 # Configure MySQL to connect to RDS
 app.config['MYSQL_HOST'] = 'database-1.cb0a20044fec.us-east-2.rds.amazonaws.com'
-app.config['MYSQL_USER'] = 'admin'  # Assuming you're using the default 'admin' user
+app.config['MYSQL_USER'] = 'admin'  # Default RDS admin user
 app.config['MYSQL_PASSWORD'] = 'Cprime2003'
-app.config['MYSQL_DB'] = 'message_db'  # We'll create this database
+app.config['MYSQL_DB'] = 'message_db'  # Will be created if doesn't exist
 app.config['MYSQL_CURSORCLASS'] = 'DictCursor'
 
 # Initialize MySQL
@@ -52,11 +52,15 @@ mysql = MySQL(app)
 def initialize_database():
     """Create database and table if they don't exist"""
     try:
-        conn = mysql.connect
+        # First connect without specifying a database
+        conn = mysql.connection
         cur = conn.cursor()
         
         # Create database if not exists
         cur.execute("CREATE DATABASE IF NOT EXISTS message_db")
+        conn.commit()
+        
+        # Now connect to the specific database
         cur.execute("USE message_db")
         
         # Create table if not exists
@@ -71,6 +75,12 @@ def initialize_database():
         print("Database and table initialized successfully")
     except Exception as e:
         print(f"Error initializing database: {e}")
+        raise e  # Re-raise the exception to see the full error
+
+@app.before_first_request
+def before_first_request():
+    """Initialize database before first request"""
+    initialize_database()
 
 @app.route('/')
 def hello():
@@ -82,23 +92,23 @@ def hello():
         cur.close()
         return render_template('index.html', messages=messages)
     except Exception as e:
-        return str(e), 500
+        return f"Error fetching messages: {str(e)}", 500
 
 @app.route('/submit', methods=['POST'])
 def submit():
     try:
         new_message = request.form.get('new_message')
+        if not new_message:
+            return "Message cannot be empty", 400
+            
         cur = mysql.connection.cursor()
         cur.execute('USE message_db')
-        cur.execute('INSERT INTO messages (message) VALUES (%s)', [new_message])
+        cur.execute('INSERT INTO messages (message) VALUES (%s)', (new_message,))
         mysql.connection.commit()
         cur.close()
         return redirect(url_for('hello'))
     except Exception as e:
-        return str(e), 500
+        return f"Error submitting message: {str(e)}", 500
 
 if __name__ == '__main__':
-    # Initialize database when starting the app
-    with app.app_context():
-        initialize_database()
     app.run(host='0.0.0.0', port=5000, debug=True)
