@@ -35,35 +35,34 @@
 
 import os
 from flask import Flask, render_template, request, redirect, url_for
-from flask_mysqldb import MySQL
+import MySQLdb
 
 app = Flask(__name__)
 
-# Configure MySQL to connect to RDS
-app.config['MYSQL_HOST'] = 'database-1.cb0a20044fec.us-east-2.rds.amazonaws.com'
-app.config['MYSQL_USER'] = 'admin'  # Default RDS admin user
-app.config['MYSQL_PASSWORD'] = 'Cprime2003'
-app.config['MYSQL_DB'] = 'message_db'  # Will be created if doesn't exist
-app.config['MYSQL_CURSORCLASS'] = 'DictCursor'
-
-# Initialize MySQL
-mysql = MySQL(app)
+def get_db_connection(use_message_db=False):
+    """Create a database connection"""
+    kwargs = {
+        'host': 'database-1.cb0a20044fec.us-east-2.rds.amazonaws.com',
+        'user': 'admin',
+        'password': 'Cprime2003',
+    }
+    if use_message_db:
+        kwargs['db'] = 'message_db'
+    return MySQLdb.connect(**kwargs)
 
 def initialize_database():
     """Create database and table if they don't exist"""
     try:
         # First connect without specifying a database
-        conn = mysql.connection
+        conn = get_db_connection(use_message_db=False)
         cur = conn.cursor()
         
         # Create database if not exists
         cur.execute("CREATE DATABASE IF NOT EXISTS message_db")
         conn.commit()
+        conn.select_db('message_db')  # Switch to the message_db database
         
-        # Now connect to the specific database
-        cur.execute("USE message_db")
-        
-        # Create table if not exists
+        # Now create the table
         cur.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -72,24 +71,25 @@ def initialize_database():
         """)
         conn.commit()
         cur.close()
+        conn.close()
         print("Database and table initialized successfully")
     except Exception as e:
         print(f"Error initializing database: {e}")
-        raise e  # Re-raise the exception to see the full error
+        raise
 
-@app.before_first_request
-def before_first_request():
-    """Initialize database before first request"""
+# Initialize the database when the application starts
+with app.app_context():
     initialize_database()
 
 @app.route('/')
 def hello():
     try:
-        cur = mysql.connection.cursor()
-        cur.execute('USE message_db')
+        conn = get_db_connection(use_message_db=True)
+        cur = conn.cursor()
         cur.execute('SELECT message FROM messages')
         messages = cur.fetchall()
         cur.close()
+        conn.close()
         return render_template('index.html', messages=messages)
     except Exception as e:
         return f"Error fetching messages: {str(e)}", 500
@@ -101,11 +101,12 @@ def submit():
         if not new_message:
             return "Message cannot be empty", 400
             
-        cur = mysql.connection.cursor()
-        cur.execute('USE message_db')
+        conn = get_db_connection(use_message_db=True)
+        cur = conn.cursor()
         cur.execute('INSERT INTO messages (message) VALUES (%s)', (new_message,))
-        mysql.connection.commit()
+        conn.commit()
         cur.close()
+        conn.close()
         return redirect(url_for('hello'))
     except Exception as e:
         return f"Error submitting message: {str(e)}", 500
